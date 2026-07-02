@@ -11,7 +11,8 @@ static void usage(FILE *out)
                   "usage:\n"
                   "  ntap-c -c <config> -t\n"
                   "  ntap-c -c <config> run\n"
-                  "  ntap-c -c <config> run --direct-only --direct-addr <addr> --direct-token <token>\n");
+                  "  ntap-c -c <config> run --direct-only --direct-addr <addr> --direct-token <token>\n"
+                  "  ntap-c -c <config> run --direct-first --direct-addr <addr> --direct-token <token>\n");
 }
 
 int main(int argc, char **argv)
@@ -57,12 +58,15 @@ int main(int argc, char **argv)
             const char *direct_addr = NULL;
             const char *direct_token = NULL;
             bool direct_only = false;
+            bool direct_first = false;
             int j = 0;
             int rc = 0;
 
             for (j = command_start + 1; j < argc; j++) {
                 if (strcmp(argv[j], "--direct-only") == 0) {
                     direct_only = true;
+                } else if (strcmp(argv[j], "--direct-first") == 0) {
+                    direct_first = true;
                 } else if (strcmp(argv[j], "--direct-addr") == 0) {
                     if (j + 1 >= argc) {
                         usage(stderr);
@@ -81,14 +85,35 @@ int main(int argc, char **argv)
                     return 2;
                 }
             }
-            if (direct_only || direct_addr != NULL || direct_token != NULL) {
-                if (!direct_only || direct_addr == NULL || direct_token == NULL) {
+            if (direct_only && direct_first) {
+                (void)fprintf(stderr,
+                              "ntap-c: --direct-only and --direct-first cannot be used together\n");
+                return 2;
+            }
+            if (direct_only || direct_first || direct_addr != NULL || direct_token != NULL) {
+                if ((!direct_only && !direct_first) ||
+                    direct_addr == NULL || direct_token == NULL) {
                     (void)fprintf(stderr,
-                                  "ntap-c: --direct-only requires --direct-addr and --direct-token\n");
+                                  "ntap-c: direct mode requires --direct-addr and --direct-token\n");
                     return 2;
                 }
-                rc = ntap_c_direct_tap_run(&cfg, direct_addr, direct_token,
-                                           err, sizeof(err));
+                if (direct_only) {
+                    rc = ntap_c_direct_tap_run(&cfg, direct_addr, direct_token,
+                                               err, sizeof(err));
+                } else {
+                    char direct_err[256];
+
+                    direct_err[0] = '\0';
+                    rc = ntap_c_direct_tap_run(&cfg, direct_addr, direct_token,
+                                               direct_err, sizeof(direct_err));
+                    if (rc != 0) {
+                        (void)fprintf(stderr,
+                                      "ntap-c: direct-first failed: %s; falling back to relay\n",
+                                      direct_err[0] == '\0' ? "unknown error" : direct_err);
+                        err[0] = '\0';
+                        rc = ntap_c_tap_run(&cfg, err, sizeof(err));
+                    }
+                }
             } else {
                 rc = ntap_c_tap_run(&cfg, err, sizeof(err));
             }

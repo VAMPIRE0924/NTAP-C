@@ -1,6 +1,6 @@
 # NTAP-C
 
-Linux TAP client with AUTH_TAP relay mode plus direct-only token TAP mode.
+Linux TAP client with AUTH_TAP relay mode, direct-only token TAP mode, and direct-first relay fallback.
 
 This repository is exported from the NTAP integration workspace. Keep git
 history source-only: do not commit build output, runtime databases, logs, or
