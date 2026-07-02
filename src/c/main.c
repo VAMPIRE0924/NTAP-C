@@ -10,7 +10,8 @@ static void usage(FILE *out)
     (void)fprintf(out,
                   "usage:\n"
                   "  ntap-c -c <config> -t\n"
-                  "  ntap-c -c <config> run\n");
+                  "  ntap-c -c <config> run\n"
+                  "  ntap-c -c <config> run --direct-only --direct-addr <addr> --direct-token <token>\n");
 }
 
 int main(int argc, char **argv)
@@ -53,7 +54,44 @@ int main(int argc, char **argv)
 
     if (command_start > 0) {
         if (strcmp(argv[command_start], "run") == 0) {
-            int rc = ntap_c_tap_run(&cfg, err, sizeof(err));
+            const char *direct_addr = NULL;
+            const char *direct_token = NULL;
+            bool direct_only = false;
+            int j = 0;
+            int rc = 0;
+
+            for (j = command_start + 1; j < argc; j++) {
+                if (strcmp(argv[j], "--direct-only") == 0) {
+                    direct_only = true;
+                } else if (strcmp(argv[j], "--direct-addr") == 0) {
+                    if (j + 1 >= argc) {
+                        usage(stderr);
+                        return 2;
+                    }
+                    direct_addr = argv[++j];
+                } else if (strcmp(argv[j], "--direct-token") == 0) {
+                    if (j + 1 >= argc) {
+                        usage(stderr);
+                        return 2;
+                    }
+                    direct_token = argv[++j];
+                } else {
+                    (void)fprintf(stderr, "ntap-c: unknown run option: %s\n", argv[j]);
+                    usage(stderr);
+                    return 2;
+                }
+            }
+            if (direct_only || direct_addr != NULL || direct_token != NULL) {
+                if (!direct_only || direct_addr == NULL || direct_token == NULL) {
+                    (void)fprintf(stderr,
+                                  "ntap-c: --direct-only requires --direct-addr and --direct-token\n");
+                    return 2;
+                }
+                rc = ntap_c_direct_tap_run(&cfg, direct_addr, direct_token,
+                                           err, sizeof(err));
+            } else {
+                rc = ntap_c_tap_run(&cfg, err, sizeof(err));
+            }
 
             if (rc != 0) {
                 (void)fprintf(stderr, "ntap-c: run failed: %s\n", err);

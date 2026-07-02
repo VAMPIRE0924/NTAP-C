@@ -18,6 +18,16 @@ int ntap_c_tap_run(const ntap_c_config_t *cfg, char *err, size_t err_len)
     (void)snprintf(err, err_len, "TAP mode is not supported on Windows in current phase");
     return 1;
 }
+
+int ntap_c_direct_tap_run(const ntap_c_config_t *cfg, const char *direct_addr,
+                          const char *direct_token, char *err, size_t err_len)
+{
+    (void)cfg;
+    (void)direct_addr;
+    (void)direct_token;
+    (void)snprintf(err, err_len, "direct TAP mode is not supported on Windows in current phase");
+    return 1;
+}
 #else
 #include <errno.h>
 #include <sys/select.h>
@@ -159,6 +169,94 @@ static int run_tap_loop(ntap_socket_t fd, const char *tap_name, uint16_t mtu,
     }
 }
 
+static int run_direct_tap_loop(ntap_socket_t fd, const char *tap_name,
+                               uint16_t mtu, uint32_t network_id,
+                               char *err, size_t err_len)
+{
+    ntap_tap_t tap;
+    uint8_t payload[NTAP_PAYLOAD_MAX_CONTROL];
+    uint8_t frame_buf[NTAP_MAX_MTU + 64u];
+    ntap_hdr_t hdr;
+    size_t payload_len = 0;
+
+    tap.fd = -1;
+    tap.name[0] = '\0';
+    if (ntap_tap_open(&tap, tap_name, mtu, err, err_len) != 0) {
+        return -1;
+    }
+    (void)printf("ntap-c: direct TAP opened name=%s mtu=%u network_id=%u\n",
+                 tap.name, mtu, network_id);
+    (void)fflush(stdout);
+
+    for (;;) {
+        fd_set readfds;
+        int maxfd = fd > tap.fd ? fd : tap.fd;
+        int selected = 0;
+        struct timeval tv;
+
+        FD_ZERO(&readfds);
+        FD_SET(fd, &readfds);
+        FD_SET(tap.fd, &readfds);
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        selected = select(maxfd + 1, &readfds, NULL, NULL, &tv);
+        if (selected < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            (void)snprintf(err, err_len, "select failed: %s", strerror(errno));
+            ntap_tap_close(&tap);
+            return -1;
+        }
+        if (selected == 0) {
+            continue;
+        }
+        if (FD_ISSET(tap.fd, &readfds)) {
+            size_t frame_len = 0;
+
+            if (ntap_tap_read(&tap, frame_buf, sizeof(frame_buf), &frame_len,
+                              err, err_len) != 0) {
+                ntap_tap_close(&tap);
+                return -1;
+            }
+            if (frame_len >= 14u && frame_len <= (size_t)mtu + 18u) {
+                if (send_tap_payload(fd, 0, network_id, frame_buf,
+                                     (uint16_t)frame_len, err, err_len) != 0) {
+                    ntap_tap_close(&tap);
+                    return -1;
+                }
+                (void)printf("ntap-c: direct TAP_FRAME sent len=%zu\n", frame_len);
+                (void)fflush(stdout);
+            }
+        }
+        if (FD_ISSET(fd, &readfds)) {
+            ntap_tap_frame_t tap_frame;
+
+            if (ntap_recv_msg(fd, &hdr, payload, sizeof(payload), &payload_len,
+                              err, err_len) != 0) {
+                ntap_tap_close(&tap);
+                return -1;
+            }
+            if (hdr.type != NTAP_MSG_TAP_FRAME ||
+                ntap_decode_tap_frame(&tap_frame, payload, payload_len) != 0 ||
+                tap_frame.network_id != network_id) {
+                (void)snprintf(err, err_len, "invalid direct TAP_FRAME");
+                ntap_tap_close(&tap);
+                return -1;
+            }
+            if (ntap_tap_write(&tap, tap_frame.frame, tap_frame.frame_len,
+                               err, err_len) != 0) {
+                ntap_tap_close(&tap);
+                return -1;
+            }
+            (void)printf("ntap-c: direct TAP_FRAME received len=%u\n",
+                         tap_frame.frame_len);
+            (void)fflush(stdout);
+        }
+    }
+}
+
 int ntap_c_tap_run(const ntap_c_config_t *cfg, char *err, size_t err_len)
 {
     ntap_socket_t fd = NTAP_INVALID_SOCKET;
@@ -235,6 +333,42 @@ int ntap_c_tap_run(const ntap_c_config_t *cfg, char *err, size_t err_len)
                  auth_ok.session_id, auth_ok.network_id);
     (void)fflush(stdout);
     rc = run_tap_loop(fd, tap_name, tap_mtu, &auth_ok, err, err_len);
+
+done:
+    ntap_socket_close(fd);
+    ntap_net_cleanup();
+    return rc;
+}
+
+int ntap_c_direct_tap_run(const ntap_c_config_t *cfg, const char *direct_addr,
+                          const char *direct_token, char *err, size_t err_len)
+{
+    ntap_socket_t fd = NTAP_INVALID_SOCKET;
+    int rc = 1;
+
+    if (cfg == NULL || direct_addr == NULL || *direct_addr == '\0' ||
+        direct_token == NULL || *direct_token == '\0') {
+        (void)snprintf(err, err_len, "direct address and token are required");
+        return 1;
+    }
+    if (cfg->network_id == 0) {
+        (void)snprintf(err, err_len, "client.network_id is required for direct mode");
+        return 1;
+    }
+    if (ntap_net_init(err, err_len) != 0 ||
+        ntap_tcp_connect(direct_addr, &fd, err, err_len) != 0) {
+        ntap_net_cleanup();
+        return 1;
+    }
+    if (ntap_send_all(fd, direct_token, strlen(direct_token), err, err_len) != 0 ||
+        ntap_send_all(fd, "\n", 1u, err, err_len) != 0) {
+        goto done;
+    }
+    (void)printf("ntap-c: direct connected addr=%s network_id=%u\n",
+                 direct_addr, cfg->network_id);
+    (void)fflush(stdout);
+    rc = run_direct_tap_loop(fd, cfg->tap_name, cfg->mtu, cfg->network_id,
+                             err, err_len);
 
 done:
     ntap_socket_close(fd);

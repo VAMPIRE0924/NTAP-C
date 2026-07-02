@@ -1,6 +1,6 @@
 # NTAP-C
 
-Linux TAP client with AUTH_TAP, CONFIG_PUSH, and TAP relay.
+Linux TAP client with AUTH_TAP relay mode plus direct-only token TAP mode.
 
 This repository is exported from the NTAP integration workspace. Keep git
 history source-only: do not commit build output, runtime databases, logs, or
