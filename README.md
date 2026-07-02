@@ -36,3 +36,9 @@ Release packages include validate\validate-tap-windows.ps1. Run it directly
 against a compiled package on the Windows validation host:
 
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\validate-tap-windows.ps1 -PackageZip .\NTAP-C-<version>-windows-x64.zip -RequireTap
+
+Release packages also include install\install-ntap-c.ps1. Use it after
+extracting the zip to install the compiled client, generate config, and run the
+same validation path:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\install\install-ntap-c.ps1 -ServerAddr '<ntap-a-host>:8024' -Username '<tap-user>' -Password '<tap-password>' -NetworkId 1 -RunValidation -RequireTap
