@@ -212,10 +212,15 @@ int ntap_c_env_check(FILE *out, const char *tap_name, char *err, size_t err_len)
 {
     unsigned int tap_windows_count = 0;
     unsigned int tun_only_count = 0;
+    ntap_tap_t tap;
+    char open_err[256];
 
     if (out == NULL) {
         out = stdout;
     }
+    (void)memset(&tap, 0, sizeof(tap));
+    tap.fd = -1;
+    open_err[0] = '\0';
     (void)fprintf(out, "platform=windows\n");
     if (tap_name != NULL && *tap_name != '\0') {
         (void)fprintf(out, "tap_name_config=%s\n", tap_name);
@@ -237,7 +242,16 @@ int ntap_c_env_check(FILE *out, const char *tap_name, char *err, size_t err_len)
         return 1;
     }
     (void)fprintf(out, "tap_driver_check=ok\n");
-    (void)fprintf(out, "tap_open_check=available_on_run\n");
+    if (ntap_tap_open(&tap, tap_name, NTAP_DEFAULT_MTU,
+                      open_err, sizeof(open_err)) != 0) {
+        (void)fprintf(out, "tap_open_check=failed\n");
+        (void)snprintf(err, err_len, "%s",
+                       open_err[0] == '\0' ? "failed to open TAP-Windows6 adapter" : open_err);
+        return 1;
+    }
+    (void)fprintf(out, "tap_open_check=ok\n");
+    (void)fprintf(out, "tap_probe=%s\n", tap.name);
+    ntap_tap_close(&tap);
     return 0;
 }
 #else

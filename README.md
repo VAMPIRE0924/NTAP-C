@@ -16,4 +16,18 @@ generated release archives. Final release packages belong in GitHub Releases.
     src/common/  shared protocol and helpers
     src/c/  component source
     conf/        minimal example config
+    scripts/windows/  Windows TAP-Windows6 smoke and driver preflight helper
 
+## Windows TAP
+
+The Windows data-plane backend supports TAP-Windows6/OpenVPN style adapters.
+Wintun/WireGuard adapters are detected by check-env but need a later backend.
+
+Run the smoke helper from PowerShell. Without -RequireTap it skips cleanly when
+no TAP-Windows6 adapter is installed:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\smoke-ntap-c-tap.ps1 -Build
+
+Use -RequireTap on a real Windows TAP validation host:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\smoke-ntap-c-tap.ps1 -Build -RequireTap

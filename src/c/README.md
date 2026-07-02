@@ -19,3 +19,6 @@ Windows TAP-Windows6/OpenVPN adapter open/read/write data-plane backend
 Windows TAP-Windows6 data-plane code builds, but still needs validation on a
 machine with a TAP-Windows6 adapter installed. Wintun/WireGuard adapters are
 detected by `check-env` but require a later Wintun-specific backend.
+
+Run `scripts/windows/smoke-ntap-c-tap.ps1 -Build` to preflight the Windows
+driver path. Add `-RequireTap` on a host that must have TAP-Windows6 installed.
