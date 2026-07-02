@@ -1,4 +1,5 @@
 #include "c/config.h"
+#include "c/env_check.h"
 #include "c/tap_client.h"
 
 #include <stdbool.h>
@@ -10,6 +11,7 @@ static void usage(FILE *out)
     (void)fprintf(out,
                   "usage:\n"
                   "  ntap-c -c <config> -t\n"
+                  "  ntap-c -c <config> check-env\n"
                   "  ntap-c -c <config> run\n"
                   "  ntap-c -c <config> run --direct-only --direct-addr <addr> --direct-token <token>\n"
                   "  ntap-c -c <config> run --direct-first --direct-addr <addr> --direct-token <token>\n");
@@ -54,6 +56,14 @@ int main(int argc, char **argv)
     }
 
     if (command_start > 0) {
+        if (strcmp(argv[command_start], "check-env") == 0) {
+            int rc = ntap_c_env_check(stdout, cfg.tap_name, err, sizeof(err));
+
+            if (rc != 0) {
+                (void)fprintf(stderr, "ntap-c: check-env failed: %s\n", err);
+            }
+            return rc;
+        }
         if (strcmp(argv[command_start], "run") == 0) {
             const char *direct_addr = NULL;
             const char *direct_token = NULL;
