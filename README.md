@@ -16,7 +16,7 @@ generated release archives. Final release packages belong in GitHub Releases.
     src/common/  shared protocol and helpers
     src/c/  component source
     conf/        minimal example config
-    scripts/windows/  Windows TAP-Windows6 smoke and driver preflight helper
+    scripts/windows/  Windows TAP-Windows6 smoke and deployment validation helpers
 
 ## Windows TAP
 
@@ -31,3 +31,8 @@ no TAP-Windows6 adapter is installed:
 Use -RequireTap on a real Windows TAP validation host:
 
     powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\smoke-ntap-c-tap.ps1 -Build -RequireTap
+
+Release packages include validate\validate-tap-windows.ps1. Run it directly
+against a compiled package on the Windows validation host:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\validate-tap-windows.ps1 -PackageZip .\NTAP-C-<version>-windows-x64.zip -RequireTap
