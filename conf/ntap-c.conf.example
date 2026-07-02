@@ -1,0 +1,11 @@
+[client]
+server_addr=127.0.0.1:8024
+username=alice
+password=change-me
+network_id=1
+tap_name=ntap-c0
+mtu=1400
+
+[log]
+level=info
+file=./ntap-c.log
