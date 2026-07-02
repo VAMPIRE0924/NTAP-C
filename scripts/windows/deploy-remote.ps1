@@ -8,6 +8,10 @@ param(
     [int]$Port = 5985,
     [switch]$UseSSL,
     [System.Management.Automation.PSCredential]$Credential,
+    [string]$CredentialUser = "",
+    [string]$CredentialPassword = "",
+    [string]$CredentialPasswordFile = "",
+    [string]$CredentialPasswordEnv = "NTAP_WINDOWS_PASSWORD",
     [string]$RemoteDir = "",
     [string]$InstallRoot = "",
     [string]$ConfigPath = "",
@@ -57,7 +61,10 @@ function Quote-Ps {
 function Mask-Secrets {
     param([Parameter(Mandatory = $true)][string]$Text)
     if (-not [string]::IsNullOrWhiteSpace($script:ResolvedTapPassword)) {
-        return $Text.Replace($script:ResolvedTapPassword, "<masked>")
+        $Text = $Text.Replace($script:ResolvedTapPassword, "<masked>")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:ResolvedCredentialPassword)) {
+        $Text = $Text.Replace($script:ResolvedCredentialPassword, "<masked>")
     }
     return $Text
 }
@@ -86,6 +93,50 @@ function Resolve-TapPassword {
     return ""
 }
 
+function Resolve-SecretValue {
+    param(
+        [string]$Inline,
+        [string]$FilePath,
+        [string]$EnvName,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Inline)) {
+        return $Inline
+    }
+    if (-not [string]::IsNullOrWhiteSpace($FilePath)) {
+        if (-not (Test-Path -LiteralPath $FilePath)) {
+            Fail "$Label file not found: $FilePath"
+        }
+        return (Get-Content -LiteralPath $FilePath -Raw).Trim()
+    }
+    if (-not [string]::IsNullOrWhiteSpace($EnvName)) {
+        $envValue = [Environment]::GetEnvironmentVariable($EnvName)
+        if (-not [string]::IsNullOrWhiteSpace($envValue)) {
+            return $envValue
+        }
+    }
+    return ""
+}
+
+function New-WindowsCredential {
+    if ($null -ne $Credential) {
+        return $Credential
+    }
+    if ([string]::IsNullOrWhiteSpace($CredentialUser)) {
+        if (-not [string]::IsNullOrWhiteSpace($CredentialPassword) -or
+            -not [string]::IsNullOrWhiteSpace($CredentialPasswordFile)) {
+            Fail "CredentialUser is required when a Windows credential password source is configured"
+        }
+        return $null
+    }
+    $script:ResolvedCredentialPassword = Resolve-SecretValue -Inline $CredentialPassword -FilePath $CredentialPasswordFile -EnvName $CredentialPasswordEnv -Label "Windows credential password"
+    if ([string]::IsNullOrWhiteSpace($script:ResolvedCredentialPassword)) {
+        Fail "Windows credential password is required when CredentialUser is set"
+    }
+    $secure = ConvertTo-SecureString -String $script:ResolvedCredentialPassword -AsPlainText -Force
+    return New-Object System.Management.Automation.PSCredential($CredentialUser, $secure)
+}
+
 function New-RemoteSession {
     $sessionArgs = @{
         ComputerName = $TargetHost
@@ -94,8 +145,8 @@ function New-RemoteSession {
     if ($UseSSL) {
         $sessionArgs.UseSSL = $true
     }
-    if ($null -ne $Credential) {
-        $sessionArgs.Credential = $Credential
+    if ($null -ne $script:ResolvedCredential) {
+        $sessionArgs.Credential = $script:ResolvedCredential
     }
     return New-PSSession @sessionArgs
 }
@@ -115,6 +166,8 @@ if (-not (Test-Path -LiteralPath $packageZip)) {
 }
 
 $script:ResolvedTapPassword = Resolve-TapPassword
+$script:ResolvedCredentialPassword = ""
+$script:ResolvedCredential = New-WindowsCredential
 foreach ($pair in @(
     @{ Name = "ServerAddr"; Value = $ServerAddr },
     @{ Name = "Username"; Value = $Username },
@@ -150,6 +203,9 @@ Write-Host "Version=$Version"
 Write-Host "TargetHost=$TargetHost"
 Write-Host "Port=$Port"
 Write-Host "UseSSL=$UseSSL"
+if ($null -ne $script:ResolvedCredential) {
+    Write-Host "CredentialUser=$($script:ResolvedCredential.UserName)"
+}
 Write-Host "RemoteDir=$RemoteDir"
 Write-Host "Package=$packageZip"
 Write-Host "InstallRoot=$InstallRoot"
@@ -178,7 +234,11 @@ if ($StartClient) { $installArgDisplay += "-StartClient" }
 if ($TargetDryRun) { $installArgDisplay += "-DryRun" }
 
 if ($DryRun) {
-    Write-DryRun "New-PSSession -ComputerName $(Quote-Ps $TargetHost) -Port $Port"
+    if ($null -ne $script:ResolvedCredential) {
+        Write-DryRun "New-PSSession -ComputerName $(Quote-Ps $TargetHost) -Port $Port -Credential <credential:$($script:ResolvedCredential.UserName)>"
+    } else {
+        Write-DryRun "New-PSSession -ComputerName $(Quote-Ps $TargetHost) -Port $Port"
+    }
     Write-DryRun "Invoke-Command: New-Item -ItemType Directory -Path $(Quote-Ps $RemoteDir) -Force"
     Write-DryRun "Copy-Item -ToSession <session> -LiteralPath $(Quote-Ps $packageZip) -Destination $(Quote-Ps $remoteZip) -Force"
     Write-DryRun "Invoke-Command: Expand-Archive -LiteralPath $(Quote-Ps $remoteZip) -DestinationPath $(Quote-Ps $remotePackageRoot) -Force"
