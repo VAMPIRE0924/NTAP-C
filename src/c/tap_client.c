@@ -257,7 +257,48 @@ static int run_direct_tap_loop(ntap_socket_t fd, const char *tap_name,
     }
 }
 
-int ntap_c_tap_run(const ntap_c_config_t *cfg, char *err, size_t err_len)
+static int run_direct_tap_connect(const ntap_c_config_t *cfg, const char *direct_addr,
+                                  const char *direct_token, const char *tap_name,
+                                  uint16_t mtu, uint32_t network_id,
+                                  char *err, size_t err_len)
+{
+    ntap_socket_t fd = NTAP_INVALID_SOCKET;
+    int rc = 1;
+
+    if (cfg == NULL || direct_addr == NULL || *direct_addr == '\0' ||
+        direct_token == NULL || *direct_token == '\0') {
+        (void)snprintf(err, err_len, "direct address and token are required");
+        return 1;
+    }
+    if (network_id == 0) {
+        (void)snprintf(err, err_len, "network_id is required for direct mode");
+        return 1;
+    }
+    if (tap_name == NULL || *tap_name == '\0') {
+        tap_name = cfg->tap_name;
+    }
+    if (mtu < NTAP_MIN_MTU || mtu > NTAP_MAX_MTU) {
+        mtu = cfg->mtu;
+    }
+    if (ntap_tcp_connect(direct_addr, &fd, err, err_len) != 0) {
+        return 1;
+    }
+    if (ntap_send_all(fd, direct_token, strlen(direct_token), err, err_len) != 0 ||
+        ntap_send_all(fd, "\n", 1u, err, err_len) != 0) {
+        goto done;
+    }
+    (void)printf("ntap-c: direct connected addr=%s network_id=%u\n",
+                 direct_addr, network_id);
+    (void)fflush(stdout);
+    rc = run_direct_tap_loop(fd, tap_name, mtu, network_id, err, err_len);
+
+done:
+    ntap_socket_close(fd);
+    return rc;
+}
+
+static int tap_run_mode(const ntap_c_config_t *cfg, int allow_config_direct,
+                        char *err, size_t err_len)
 {
     ntap_socket_t fd = NTAP_INVALID_SOCKET;
     uint8_t payload[NTAP_PAYLOAD_MAX_CONTROL];
@@ -332,6 +373,37 @@ int ntap_c_tap_run(const ntap_c_config_t *cfg, char *err, size_t err_len)
     (void)printf("ntap-c: auth ok session_id=%u network_id=%u\n",
                  auth_ok.session_id, auth_ok.network_id);
     (void)fflush(stdout);
+    if (allow_config_direct &&
+        strcmp(runtime_config.direct_mode, "direct_first") == 0 &&
+        runtime_config.direct_addr[0] != '\0' &&
+        runtime_config.direct_token[0] != '\0') {
+        char direct_err[256];
+        int direct_rc = 1;
+
+        direct_err[0] = '\0';
+        (void)printf("ntap-c: strategy mode=direct_first addr=%s fallback=relay\n",
+                     runtime_config.direct_addr);
+        (void)fflush(stdout);
+        ntap_socket_close(fd);
+        fd = NTAP_INVALID_SOCKET;
+        ntap_net_cleanup();
+
+        if (ntap_net_init(direct_err, sizeof(direct_err)) == 0) {
+            direct_rc = run_direct_tap_connect(cfg, runtime_config.direct_addr,
+                                               runtime_config.direct_token, tap_name,
+                                               tap_mtu, auth_ok.network_id,
+                                               direct_err, sizeof(direct_err));
+            ntap_net_cleanup();
+        }
+        if (direct_rc == 0) {
+            return 0;
+        }
+        (void)fprintf(stderr,
+                      "ntap-c: config direct-first failed: %s; falling back to relay\n",
+                      direct_err[0] == '\0' ? "unknown error" : direct_err);
+        err[0] = '\0';
+        return tap_run_mode(cfg, 0, err, err_len);
+    }
     rc = run_tap_loop(fd, tap_name, tap_mtu, &auth_ok, err, err_len);
 
 done:
@@ -340,10 +412,14 @@ done:
     return rc;
 }
 
+int ntap_c_tap_run(const ntap_c_config_t *cfg, char *err, size_t err_len)
+{
+    return tap_run_mode(cfg, 1, err, err_len);
+}
+
 int ntap_c_direct_tap_run(const ntap_c_config_t *cfg, const char *direct_addr,
                           const char *direct_token, char *err, size_t err_len)
 {
-    ntap_socket_t fd = NTAP_INVALID_SOCKET;
     int rc = 1;
 
     if (cfg == NULL || direct_addr == NULL || *direct_addr == '\0' ||
@@ -355,23 +431,12 @@ int ntap_c_direct_tap_run(const ntap_c_config_t *cfg, const char *direct_addr,
         (void)snprintf(err, err_len, "client.network_id is required for direct mode");
         return 1;
     }
-    if (ntap_net_init(err, err_len) != 0 ||
-        ntap_tcp_connect(direct_addr, &fd, err, err_len) != 0) {
+    if (ntap_net_init(err, err_len) != 0) {
         ntap_net_cleanup();
         return 1;
     }
-    if (ntap_send_all(fd, direct_token, strlen(direct_token), err, err_len) != 0 ||
-        ntap_send_all(fd, "\n", 1u, err, err_len) != 0) {
-        goto done;
-    }
-    (void)printf("ntap-c: direct connected addr=%s network_id=%u\n",
-                 direct_addr, cfg->network_id);
-    (void)fflush(stdout);
-    rc = run_direct_tap_loop(fd, cfg->tap_name, cfg->mtu, cfg->network_id,
-                             err, err_len);
-
-done:
-    ntap_socket_close(fd);
+    rc = run_direct_tap_connect(cfg, direct_addr, direct_token, cfg->tap_name,
+                                cfg->mtu, cfg->network_id, err, err_len);
     ntap_net_cleanup();
     return rc;
 }
