@@ -13,6 +13,9 @@ direct-only token mode against NTAP-B direct listener
 direct-first fallback to AUTH_TAP relay when direct setup fails
 automatic direct-first strategy consumption from CONFIG_PUSH v2
 `ntap-c check-env` Linux TAP privilege preflight and Windows TAP/Wintun adapter discovery
+Windows TAP-Windows6/OpenVPN adapter open/read/write data-plane backend
 ```
 
-Windows TAP data-plane support remains post-MVP.
+Windows TAP-Windows6 data-plane code builds, but still needs validation on a
+machine with a TAP-Windows6 adapter installed. Wintun/WireGuard adapters are
+detected by `check-env` but require a later Wintun-specific backend.

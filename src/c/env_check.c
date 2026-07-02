@@ -77,10 +77,14 @@ static int query_reg_string(HKEY key, const char *value_name,
     return 0;
 }
 
-static int value_looks_like_tap(const char *value)
+static int value_looks_like_tap_windows(const char *value)
 {
-    return contains_ci(value, "tap") ||
-           contains_ci(value, "wintun") ||
+    return contains_ci(value, "tap");
+}
+
+static int value_looks_like_tun_only(const char *value)
+{
+    return contains_ci(value, "wintun") ||
            contains_ci(value, "wireguard");
 }
 
@@ -105,11 +109,12 @@ static void query_connection_name(const char *guid, char *out, size_t out_len)
     RegCloseKey(key);
 }
 
-static unsigned int enumerate_windows_tap_adapters(FILE *out)
+static unsigned int enumerate_windows_tap_adapters(FILE *out, unsigned int *tun_only_count)
 {
     HKEY class_key = NULL;
     DWORD index = 0;
     unsigned int count = 0;
+    unsigned int tun_count = 0;
     LONG open_rc = ERROR_SUCCESS;
 
     open_rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, NTAP_NET_CLASS_KEY, 0,
@@ -154,33 +159,59 @@ static unsigned int enumerate_windows_tap_adapters(FILE *out)
                                driver_desc, sizeof(driver_desc));
         (void)query_reg_string(adapter_key, "NetCfgInstanceId",
                                guid, sizeof(guid));
-        if (value_looks_like_tap(component_id) ||
-            value_looks_like_tap(matching_id) ||
-            value_looks_like_tap(driver_desc)) {
-            count++;
+        if (value_looks_like_tap_windows(component_id) ||
+            value_looks_like_tap_windows(matching_id) ||
+            value_looks_like_tap_windows(driver_desc) ||
+            value_looks_like_tun_only(component_id) ||
+            value_looks_like_tun_only(matching_id) ||
+            value_looks_like_tun_only(driver_desc)) {
+            int supported = value_looks_like_tap_windows(component_id) ||
+                            value_looks_like_tap_windows(matching_id) ||
+                            value_looks_like_tap_windows(driver_desc);
+            unsigned int display_index = 0;
+
+            if (supported) {
+                count++;
+                display_index = count;
+            } else {
+                tun_count++;
+                display_index = tun_count;
+            }
             query_connection_name(guid, connection_name, sizeof(connection_name));
             display_name = connection_name[0] != '\0' ? connection_name : driver_desc;
-            (void)fprintf(out, "adapter_%u_name=%s\n", count,
+            (void)fprintf(out, "%s_%u_name=%s\n",
+                          supported ? "tap_windows_adapter" : "tun_only_adapter",
+                          display_index,
                           display_name == NULL || *display_name == '\0' ?
                           "unknown" : display_name);
-            (void)fprintf(out, "adapter_%u_component_id=%s\n", count,
+            (void)fprintf(out, "%s_%u_component_id=%s\n",
+                          supported ? "tap_windows_adapter" : "tun_only_adapter",
+                          display_index,
                           component_id[0] == '\0' ? "unknown" : component_id);
-            (void)fprintf(out, "adapter_%u_driver=%s\n", count,
+            (void)fprintf(out, "%s_%u_driver=%s\n",
+                          supported ? "tap_windows_adapter" : "tun_only_adapter",
+                          display_index,
                           driver_desc[0] == '\0' ? "unknown" : driver_desc);
             if (guid[0] != '\0') {
-                (void)fprintf(out, "adapter_%u_guid=%s\n", count, guid);
+                (void)fprintf(out, "%s_%u_guid=%s\n",
+                              supported ? "tap_windows_adapter" : "tun_only_adapter",
+                              display_index, guid);
             }
         }
         RegCloseKey(adapter_key);
     }
 
     RegCloseKey(class_key);
+    if (tun_only_count != NULL) {
+        *tun_only_count = tun_count;
+    }
     return count;
 }
 
 int ntap_c_env_check(FILE *out, const char *tap_name, char *err, size_t err_len)
 {
-    unsigned int adapter_count = 0;
+    unsigned int tap_windows_count = 0;
+    unsigned int tun_only_count = 0;
 
     if (out == NULL) {
         out = stdout;
@@ -189,17 +220,24 @@ int ntap_c_env_check(FILE *out, const char *tap_name, char *err, size_t err_len)
     if (tap_name != NULL && *tap_name != '\0') {
         (void)fprintf(out, "tap_name_config=%s\n", tap_name);
     }
-    adapter_count = enumerate_windows_tap_adapters(out);
-    (void)fprintf(out, "tap_adapter_count=%u\n", adapter_count);
-    if (adapter_count == 0) {
+    tap_windows_count = enumerate_windows_tap_adapters(out, &tun_only_count);
+    (void)fprintf(out, "tap_backend=tap-windows6\n");
+    (void)fprintf(out, "tap_windows_adapter_count=%u\n", tap_windows_count);
+    (void)fprintf(out, "tun_only_adapter_count=%u\n", tun_only_count);
+    if (tap_windows_count == 0) {
         (void)fprintf(out, "tap_driver_check=missing\n");
         (void)fprintf(out, "tap_open_check=skipped\n");
-        (void)snprintf(err, err_len,
-                       "no TAP/Wintun adapter found; install a supported Windows TAP driver");
+        if (tun_only_count > 0) {
+            (void)snprintf(err, err_len,
+                           "Wintun/WireGuard adapter found, but this data-plane backend requires TAP-Windows6");
+        } else {
+            (void)snprintf(err, err_len,
+                           "no TAP-Windows6 adapter found; install a supported Windows TAP driver");
+        }
         return 1;
     }
     (void)fprintf(out, "tap_driver_check=ok\n");
-    (void)fprintf(out, "tap_open_check=pending_implementation\n");
+    (void)fprintf(out, "tap_open_check=available_on_run\n");
     return 0;
 }
 #else

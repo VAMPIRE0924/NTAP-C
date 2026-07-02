@@ -12,25 +12,12 @@
 #include <string.h>
 
 #ifdef _WIN32
-int ntap_c_tap_run(const ntap_c_config_t *cfg, char *err, size_t err_len)
-{
-    (void)cfg;
-    (void)snprintf(err, err_len, "TAP mode is not supported on Windows in current phase");
-    return 1;
-}
-
-int ntap_c_direct_tap_run(const ntap_c_config_t *cfg, const char *direct_addr,
-                          const char *direct_token, char *err, size_t err_len)
-{
-    (void)cfg;
-    (void)direct_addr;
-    (void)direct_token;
-    (void)snprintf(err, err_len, "direct TAP mode is not supported on Windows in current phase");
-    return 1;
-}
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #else
 #include <errno.h>
 #include <sys/select.h>
+#endif
 
 static int recv_expected(ntap_socket_t fd, uint8_t expected_type, ntap_hdr_t *hdr,
                          uint8_t *payload, size_t payload_cap, size_t *payload_len,
@@ -63,6 +50,222 @@ static int send_tap_payload(ntap_socket_t fd, uint32_t session_id, uint32_t netw
                          (uint32_t)payload_len, err, err_len);
 }
 
+#ifdef _WIN32
+typedef struct win_tap_pump {
+    ntap_tap_t *tap;
+    ntap_socket_t fd;
+    uint32_t session_id;
+    uint32_t network_id;
+    uint16_t mtu;
+    CRITICAL_SECTION *send_mu;
+    volatile LONG stop;
+    int error;
+    char err[256];
+} win_tap_pump_t;
+
+static int win_tap_should_stop(win_tap_pump_t *ctx)
+{
+    return InterlockedCompareExchange((volatile LONG *)&ctx->stop, 0, 0) != 0;
+}
+
+static void win_tap_fail(win_tap_pump_t *ctx, const char *msg)
+{
+    if (ctx == NULL) {
+        return;
+    }
+    if (InterlockedCompareExchange((volatile LONG *)&ctx->stop, 1, 0) == 0) {
+        ctx->error = 1;
+        (void)snprintf(ctx->err, sizeof(ctx->err), "%s", msg == NULL ? "tap pump failed" : msg);
+        ntap_socket_shutdown(ctx->fd);
+        ntap_tap_interrupt(ctx->tap);
+    }
+}
+
+static int win_send_msg_locked(ntap_socket_t fd, CRITICAL_SECTION *send_mu,
+                               uint8_t type, uint32_t session_id,
+                               const void *payload, uint32_t payload_len,
+                               char *err, size_t err_len)
+{
+    int rc = 0;
+
+    EnterCriticalSection(send_mu);
+    rc = ntap_send_msg(fd, type, session_id, payload, payload_len, err, err_len);
+    LeaveCriticalSection(send_mu);
+    return rc;
+}
+
+static int win_send_tap_payload_locked(ntap_socket_t fd, CRITICAL_SECTION *send_mu,
+                                       uint32_t session_id, uint32_t network_id,
+                                       const uint8_t *frame, uint16_t frame_len,
+                                       char *err, size_t err_len)
+{
+    int rc = 0;
+
+    EnterCriticalSection(send_mu);
+    rc = send_tap_payload(fd, session_id, network_id, frame, frame_len, err, err_len);
+    LeaveCriticalSection(send_mu);
+    return rc;
+}
+
+static DWORD WINAPI win_tap_reader_thread(LPVOID opaque)
+{
+    win_tap_pump_t *ctx = (win_tap_pump_t *)opaque;
+    uint8_t frame_buf[NTAP_MAX_MTU + 64u];
+
+    while (!win_tap_should_stop(ctx)) {
+        size_t frame_len = 0;
+        char local_err[256];
+
+        local_err[0] = '\0';
+        if (ntap_tap_read(ctx->tap, frame_buf, sizeof(frame_buf), &frame_len,
+                          local_err, sizeof(local_err)) != 0) {
+            if (!win_tap_should_stop(ctx)) {
+                win_tap_fail(ctx, local_err[0] == '\0' ? "read TAP failed" : local_err);
+            }
+            break;
+        }
+        if (frame_len >= 14u && frame_len <= (size_t)ctx->mtu + 18u) {
+            local_err[0] = '\0';
+            if (win_send_tap_payload_locked(ctx->fd, ctx->send_mu,
+                                            ctx->session_id, ctx->network_id,
+                                            frame_buf, (uint16_t)frame_len,
+                                            local_err, sizeof(local_err)) != 0) {
+                win_tap_fail(ctx, local_err[0] == '\0' ? "send TAP_FRAME failed" : local_err);
+                break;
+            }
+            (void)printf("ntap-c: TAP_FRAME sent len=%zu\n", frame_len);
+            (void)fflush(stdout);
+        }
+    }
+    return 0;
+}
+
+static int run_windows_tap_loop(ntap_socket_t fd, const char *tap_name,
+                                uint16_t mtu, uint32_t session_id,
+                                uint32_t network_id, int heartbeat,
+                                char *err, size_t err_len)
+{
+    ntap_tap_t tap;
+    CRITICAL_SECTION send_mu;
+    win_tap_pump_t pump;
+    HANDLE reader_thread = NULL;
+    uint8_t payload[NTAP_PAYLOAD_MAX_CONTROL];
+    ntap_hdr_t hdr;
+    size_t payload_len = 0;
+    int rc = -1;
+    int send_mu_ready = 0;
+
+    (void)memset(&tap, 0, sizeof(tap));
+    tap.fd = -1;
+    tap.name[0] = '\0';
+    if (ntap_tap_open(&tap, tap_name, mtu, err, err_len) != 0) {
+        return -1;
+    }
+    (void)printf("ntap-c: TAP opened name=%s mtu=%u backend=tap-windows\n",
+                 tap.name, mtu);
+    (void)fflush(stdout);
+
+    InitializeCriticalSection(&send_mu);
+    send_mu_ready = 1;
+    (void)memset(&pump, 0, sizeof(pump));
+    pump.tap = &tap;
+    pump.fd = fd;
+    pump.session_id = session_id;
+    pump.network_id = network_id;
+    pump.mtu = mtu;
+    pump.send_mu = &send_mu;
+
+    reader_thread = CreateThread(NULL, 0, win_tap_reader_thread, &pump, 0, NULL);
+    if (reader_thread == NULL) {
+        (void)snprintf(err, err_len, "failed to start TAP reader thread");
+        goto done;
+    }
+    if (heartbeat &&
+        win_send_msg_locked(fd, &send_mu, NTAP_MSG_PING, session_id, NULL, 0,
+                            err, err_len) != 0) {
+        goto done;
+    }
+
+    for (;;) {
+        int wait_rc = ntap_socket_wait_read(fd, 1000u, err, err_len);
+
+        if (pump.error) {
+            (void)snprintf(err, err_len, "%s", pump.err);
+            goto done;
+        }
+        if (wait_rc == 1) {
+            if (heartbeat) {
+                err[0] = '\0';
+                if (win_send_msg_locked(fd, &send_mu, NTAP_MSG_PING, session_id,
+                                        NULL, 0, err, err_len) != 0) {
+                    goto done;
+                }
+            }
+            continue;
+        }
+        if (wait_rc != 0) {
+            goto done;
+        }
+        if (ntap_recv_msg(fd, &hdr, payload, sizeof(payload), &payload_len,
+                          err, err_len) != 0) {
+            goto done;
+        }
+        if (heartbeat && hdr.type == NTAP_MSG_PONG) {
+            continue;
+        }
+        if (hdr.type == NTAP_MSG_TAP_FRAME) {
+            ntap_tap_frame_t tap_frame;
+
+            if (ntap_decode_tap_frame(&tap_frame, payload, payload_len) != 0 ||
+                tap_frame.network_id != network_id) {
+                (void)snprintf(err, err_len, "invalid TAP_FRAME");
+                goto done;
+            }
+            if (ntap_tap_write(&tap, tap_frame.frame, tap_frame.frame_len,
+                               err, err_len) != 0) {
+                goto done;
+            }
+            (void)printf("ntap-c: TAP_FRAME received len=%u\n", tap_frame.frame_len);
+            (void)fflush(stdout);
+            continue;
+        }
+        (void)snprintf(err, err_len, "unexpected message in tap mode: %s",
+                       ntap_msg_type_name(hdr.type));
+        goto done;
+    }
+
+done:
+    InterlockedExchange((volatile LONG *)&pump.stop, 1);
+    ntap_tap_interrupt(&tap);
+    if (reader_thread != NULL) {
+        (void)WaitForSingleObject(reader_thread, INFINITE);
+        CloseHandle(reader_thread);
+    }
+    if (pump.error && err != NULL && err_len > 0) {
+        (void)snprintf(err, err_len, "%s", pump.err);
+    }
+    if (send_mu_ready) {
+        DeleteCriticalSection(&send_mu);
+    }
+    ntap_tap_close(&tap);
+    return rc;
+}
+
+static int run_tap_loop(ntap_socket_t fd, const char *tap_name, uint16_t mtu,
+                        const ntap_auth_ok_t *auth_ok, char *err, size_t err_len)
+{
+    return run_windows_tap_loop(fd, tap_name, mtu, auth_ok->session_id,
+                                auth_ok->network_id, 1, err, err_len);
+}
+
+static int run_direct_tap_loop(ntap_socket_t fd, const char *tap_name,
+                               uint16_t mtu, uint32_t network_id,
+                               char *err, size_t err_len)
+{
+    return run_windows_tap_loop(fd, tap_name, mtu, 0, network_id, 0,
+                                err, err_len);
+}
+#else
 static int run_tap_loop(ntap_socket_t fd, const char *tap_name, uint16_t mtu,
                         const ntap_auth_ok_t *auth_ok, char *err, size_t err_len)
 {
@@ -256,6 +459,7 @@ static int run_direct_tap_loop(ntap_socket_t fd, const char *tap_name,
         }
     }
 }
+#endif
 
 static int run_direct_tap_connect(const ntap_c_config_t *cfg, const char *direct_addr,
                                   const char *direct_token, const char *tap_name,
@@ -440,4 +644,3 @@ int ntap_c_direct_tap_run(const ntap_c_config_t *cfg, const char *direct_addr,
     ntap_net_cleanup();
     return rc;
 }
-#endif
