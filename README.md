@@ -42,3 +42,9 @@ extracting the zip to install the compiled client, generate config, and run the
 same validation path:
 
     powershell -NoProfile -ExecutionPolicy Bypass -File .\install\install-ntap-c.ps1 -ServerAddr '<ntap-a-host>:8024' -Username '<tap-user>' -Password '<tap-password>' -NetworkId 1 -RunValidation -RequireTap
+
+From the integration workspace, scripts/windows/deploy-remote.ps1 can copy the
+compiled Windows release zip to a reachable Windows TAP host through PowerShell
+Remoting, run the packaged installer with -RequireTap, and fetch the validation
+report. Prefer NTAP_TAP_PASSWORD or TapPasswordFile so the TAP password does
+not have to be typed into the command line.
