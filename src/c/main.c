@@ -17,7 +17,7 @@ static void usage(FILE *out)
                   "  ntap-c -c <config> run --direct-first --direct-addr <addr> --direct-token <token>\n");
 }
 
-int main(int argc, char **argv)
+int ntap_c_cli_main(int argc, char **argv)
 {
     const char *config_path = NULL;
     bool test_config = false;
@@ -140,4 +140,9 @@ int main(int argc, char **argv)
 
     (void)printf("ntap-c: phase 0 skeleton ready; use -t to validate config\n");
     return 0;
+}
+
+int main(int argc, char **argv)
+{
+    return ntap_c_cli_main(argc, argv);
 }

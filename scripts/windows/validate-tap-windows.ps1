@@ -140,11 +140,19 @@ try {
     }
 
     if ([string]::IsNullOrWhiteSpace($ExePath)) {
+        $packagedCli = Join-Path $packageRoot "bin\ntap-c-cli.exe"
         $packagedExe = Join-Path $packageRoot "bin\ntap-c.exe"
-        if (Test-Path -LiteralPath $packagedExe) {
+        if (Test-Path -LiteralPath $packagedCli) {
+            $ExePath = $packagedCli
+        } elseif (Test-Path -LiteralPath $packagedExe) {
             $ExePath = $packagedExe
         } else {
-            $ExePath = Join-Path $packageRoot "build\msys2\bin\ntap-c.exe"
+            $buildCli = Join-Path $packageRoot "build\msys2\bin\ntap-c-cli.exe"
+            if (Test-Path -LiteralPath $buildCli) {
+                $ExePath = $buildCli
+            } else {
+                $ExePath = Join-Path $packageRoot "build\msys2\bin\ntap-c.exe"
+            }
         }
     }
     if ([string]::IsNullOrWhiteSpace($ConfigPath)) {

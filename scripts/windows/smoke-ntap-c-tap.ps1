@@ -33,7 +33,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ExePath)) {
-    $ExePath = Join-Path $RepoRoot "build\msys2\bin\ntap-c.exe"
+    $ExePath = Join-Path $RepoRoot "build\msys2\bin\ntap-c-cli.exe"
 }
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Join-Path $RepoRoot "conf\ntap-c.conf.example"
@@ -60,7 +60,7 @@ if ($Build) {
 }
 
 if (-not (Test-Path -LiteralPath $ExePath)) {
-    throw "Missing ntap-c executable: $ExePath"
+    throw "Missing ntap-c CLI executable: $ExePath"
 }
 if (-not (Test-Path -LiteralPath $ConfigPath)) {
     throw "Missing ntap-c config: $ConfigPath"

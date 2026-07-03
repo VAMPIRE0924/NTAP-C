@@ -1,6 +1,6 @@
 # NTAP-C
 
-Linux TAP client with AUTH_TAP relay mode, automatic CONFIG_PUSH direct-first strategy, direct-only token TAP mode, direct-first relay fallback, and Windows TAP-Windows6 backend scaffolding.
+Linux TAP client plus Windows customer GUI executable with AUTH_TAP relay mode, automatic CONFIG_PUSH direct-first strategy, direct-only token TAP mode, direct-first relay fallback, and TAP-Windows6 backend support.
 
 This repository is exported from the NTAP integration workspace. Keep git
 history source-only: do not commit build output, runtime databases, logs, or
@@ -19,6 +19,20 @@ generated release archives. Final release packages belong in GitHub Releases.
     scripts/windows/  Windows TAP-Windows6 smoke and deployment validation helpers
 
 ## Windows TAP
+
+Customer mode is the Windows GUI executable:
+
+    bin\ntap-c.exe
+
+Double-click it, enter the server address, TAP account, password, network ID,
+and TAP adapter name, then click Connect. The GUI writes the local config,
+runs the CLI preflight, and calls the TAP preparation helper with elevation
+when needed.
+
+The companion CLI executable is kept for validation, services, and automation:
+
+    bin\ntap-c-cli.exe -c conf\ntap-c.conf.example check-env
+    bin\ntap-c-cli.exe -c conf\ntap-c.conf.example run
 
 The Windows data-plane backend supports TAP-Windows6/OpenVPN style adapters.
 Wintun/WireGuard adapters are detected by check-env but need a later backend.

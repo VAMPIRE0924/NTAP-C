@@ -134,10 +134,14 @@ try {
     }
 
     $sourceExe = Join-Path $sourceRoot "bin\ntap-c.exe"
+    $sourceCliExe = Join-Path $sourceRoot "bin\ntap-c-cli.exe"
     $sourceConf = Join-Path $sourceRoot "conf\ntap-c.conf.example"
     if (-not $DryRun) {
         if (-not (Test-Path -LiteralPath $sourceExe)) {
             throw "missing ntap-c executable: $sourceExe"
+        }
+        if (-not (Test-Path -LiteralPath $sourceCliExe)) {
+            throw "missing ntap-c CLI executable: $sourceCliExe"
         }
         if (-not (Test-Path -LiteralPath $sourceConf)) {
             throw "missing config example: $sourceConf"
@@ -183,13 +187,14 @@ try {
     }
 
     $installedExe = Join-Path $InstallRoot "bin\ntap-c.exe"
+    $installedCliExe = Join-Path $InstallRoot "bin\ntap-c-cli.exe"
     $validator = Join-Path $InstallRoot "validate\validate-tap-windows.ps1"
 
     if ($RunValidation) {
         if (-not $DryRun -and -not (Test-Path -LiteralPath $validator)) {
             throw "missing validator: $validator"
         }
-        $validateArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $validator, "-ExePath", $installedExe, "-ConfigPath", $ConfigPath)
+        $validateArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $validator, "-ExePath", $installedCliExe, "-ConfigPath", $ConfigPath)
         if ($RequireTap) {
             $validateArgs += "-RequireTap"
         }
@@ -205,12 +210,13 @@ try {
 
     if ($StartClient) {
         $arguments = "-c `"$ConfigPath`" run"
-        Invoke-InstallAction "start ntap-c client in hidden window" {
-            Start-Process -FilePath $installedExe -ArgumentList $arguments -WorkingDirectory $InstallRoot -WindowStyle Hidden
+        Invoke-InstallAction "start ntap-c CLI client in hidden window" {
+            Start-Process -FilePath $installedCliExe -ArgumentList $arguments -WorkingDirectory $InstallRoot -WindowStyle Hidden
         }
     }
 
     Write-Step "Install complete."
+    Write-Step "Customer GUI: $installedExe"
     Write-Step "Edit config before production use: $ConfigPath"
 }
 finally {
