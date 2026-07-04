@@ -1,4 +1,4 @@
-# NTAP-C
+# NTAP-C 
 
 NTAP-C is the NTAP client side. On Windows it is customer-facing: double-click `ntap-c.exe`, enter connection information, click Connect, and the GUI writes local config, checks TAP, and prepares the TAP adapter with administrator permission when needed.
 
